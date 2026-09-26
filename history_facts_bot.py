@@ -97,7 +97,7 @@ def _call_gemini(prompt):
 
 
 def generate_history_content(topic, video_format):
-    n_facts = 1 if video_format == "shorts" else 7
+    n_facts = 3 if video_format == "shorts" else 7
     used_topics = ""
     if os.path.exists(USED_TOPICS_FILE):
         with open(USED_TOPICS_FILE, "r", encoding="utf-8") as f:
@@ -113,16 +113,37 @@ def generate_history_content(topic, video_format):
             f"{used_topics if used_topics else '(none yet)'}"
         )
 
+    if video_format == "shorts":
+        structure_instruction = f"""
+        This is for a SHORTS video (one single, focused story told in exactly {n_facts} short beats):
+        - Beat 1 (HOOK): A punchy, curiosity-driven question or shocking claim in Hindi
+          (e.g. "क्या आप जानते हैं कि...") — no fact detail yet, ONLY the hook, 15-20 words.
+        - Beat 2 (THE FACT): The surprising core fact/detail itself, 30-40 words.
+        - Beat 3 (TWIST/IMPACT): A closing punch line — the consequence, twist, or a one-line
+          call to follow for more such facts, 15-25 words.
+        All 3 beats must be about the SAME single event/person (not 3 random facts).
+        """
+    else:
+        structure_instruction = f"""
+        Write exactly {n_facts} DIFFERENT interesting facts about this topic, each 35-55 words.
+        STRICT HOOK RULE: The very FIRST fact's text MUST start with a punchy, curiosity-driven
+        HOOK line (a surprising question or shocking claim in Hindi, e.g. "क्या आप जानते हैं कि...")
+        BEFORE getting into the fact detail. The remaining facts should each stand on their own.
+        """
+
     prompt = f"""
-    You are an expert YouTube scriptwriter for a Hindi "History Facts" channel.
+    You are an expert viral YouTube scriptwriter for a Hindi "History Facts" channel.
     {topic_instruction}
 
-    Write exactly {n_facts} interesting, verified-sounding history fact(s) about this topic,
-    each 35-55 words long, in natural spoken HINDI (Devanagari script), engaging and dramatic
-    but factually reasonable (no fake statistics).
+    {structure_instruction}
+    All text in natural spoken HINDI (Devanagari script), engaging and dramatic but factually
+    reasonable (no fake statistics).
 
-    For EACH fact also give a short ENGLISH image search query (3-6 words) that would find a
-    real, relevant historical photo/painting/monument for that specific fact.
+    For EACH beat/fact also give a SPECIFIC, SEARCHABLE ENGLISH image search query (4-8 words) that
+    names the exact person/place/event/year mentioned in THAT beat (never a vague/abstract word like
+    "map" or "alliances" — always a real photographable subject: a named person, building, artifact,
+    battle scene, portrait, etc). This query fetches a real matching historical photo/painting, so it
+    must be precise and clearly different from the other beats' queries.
 
     Also give:
     - topic: the final topic name (English, short)
@@ -156,8 +177,21 @@ def generate_history_content(topic, video_format):
 # ==========================================
 # STEP 2: Real photos via DuckDuckGo
 # ==========================================
-def download_image_for_fact(query, out_path, fallback_query="ancient history monument"):
-    for q in [query, fallback_query]:
+GENERIC_HISTORY_FALLBACKS = [
+    "ancient history monument", "old historical painting", "vintage historical photograph",
+    "ancient civilization ruins", "old war photograph archive", "historical manuscript illustration",
+]
+
+
+def download_image_for_fact(query, out_path, fallback_index=0, topic=""):
+    # Asli query + topic-aware fallback + ek ghoomta hua generic fallback — taaki
+    # baar-baar EK HI generic photo repeat na ho jab real search fail ho.
+    contextual_fallback = f"{topic} historical" if topic else "history"
+    generic_fallback = GENERIC_HISTORY_FALLBACKS[fallback_index % len(GENERIC_HISTORY_FALLBACKS)]
+
+    for attempt_no, q in enumerate([query, contextual_fallback, generic_fallback]):
+        if attempt_no > 0:
+            time.sleep(2)  # Bing ko thoda saans lene do, warna block ho sakta hai
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.images(q, max_results=6, backend="bing"))
@@ -183,6 +217,7 @@ def download_image_for_fact(query, out_path, fallback_query="ancient history mon
                     continue
         except Exception as e:
             logging.warning(f"⚠️ Image search fail for '{q}': {e}")
+        time.sleep(1)  # thodi si delay, agla attempt bina rukawat ke chale
     return False
 
 
@@ -361,9 +396,8 @@ def main():
         img_path = os.path.join(OUTPUT_DIR, f"img_{i}.jpg")
         audio_path = os.path.join(OUTPUT_DIR, f"audio_{i}.mp3")
 
-        if not download_image_for_fact(fact["image_query"], img_path):
-            notify_telegram(f"⚠️ Fact {i+1} ke liye photo nahi mili, generic image use ho rahi hai.")
-            download_image_for_fact("history ancient civilization", img_path)
+        if not download_image_for_fact(fact["image_query"], img_path, fallback_index=i, topic=content.get("topic", "")):
+            notify_telegram(f"⚠️ Fact {i+1} ke liye koi photo nahi mili, plain slide use hogi.")
 
         if not generate_voice_for_text(fact["text"], audio_path):
             notify_telegram(f"❌ Fact {i+1} ki awaaz nahi ban payi.")
