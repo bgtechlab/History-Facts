@@ -160,7 +160,7 @@ def download_image_for_fact(query, out_path, fallback_query="ancient history mon
     for q in [query, fallback_query]:
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.images(q, max_results=6))
+                results = list(ddgs.images(q, max_results=6, backend="bing"))
             for r in results:
                 url = r.get("image")
                 if not url:
