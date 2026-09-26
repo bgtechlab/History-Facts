@@ -170,12 +170,19 @@ def download_image_for_fact(query, out_path, fallback_query="ancient history mon
                     if res.status_code == 200 and len(res.content) > 15000:
                         with open(out_path, "wb") as f:
                             f.write(res.content)
-                        Image.open(out_path).verify()  # valid image check
+                        # PIL se poori tarah decode + verify karke ek clean RGB JPEG me
+                        # dobara save karo — isse WebP/PNG/CMYK/corrupt jaisi
+                        # ffmpeg-incompatible files ki wajah se crash nahi hoga.
+                        img = Image.open(out_path)
+                        img.load()
+                        if img.width < 300 or img.height < 300:
+                            raise ValueError("Image bahut chhoti hai")
+                        img.convert("RGB").save(out_path, "JPEG", quality=90)
                         return True
                 except Exception:
                     continue
         except Exception as e:
-            logging.warning(f"⚠️ DuckDuckGo image search fail for '{q}': {e}")
+            logging.warning(f"⚠️ Image search fail for '{q}': {e}")
     return False
 
 
@@ -238,6 +245,18 @@ def build_ken_burns_clip(image_path, duration, out_path, vertical=True):
         "-vf", f"scale={w*2}:{h*2}:force_original_aspect_ratio=increase,crop={w*2}:{h*2},{zoompan},format=yuv420p",
         "-c:v", "libx264", "-preset", "fast", out_path
     ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-800:])
+
+
+def build_solid_fallback_clip(duration, out_path, vertical=True):
+    """Agar image hi kharaab nikle, to crash hone ki jagah ek plain dark slide bana do."""
+    w, h = (1080, 1920) if vertical else (1920, 1080)
+    cmd = [
+        "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=0x202030:s={w}x{h}:d={duration}",
+        "-c:v", "libx264", "-preset", "fast", out_path
+    ]
     subprocess.run(cmd, capture_output=True, check=True)
 
 
@@ -247,7 +266,13 @@ def build_history_video(fact_items, video_format, output_path):
     clips = []
     for i, item in enumerate(fact_items):
         clip_path = os.path.join(OUTPUT_DIR, f"clip_{i}.mp4")
-        build_ken_burns_clip(item["image"], item["duration"], clip_path, vertical=vertical)
+        try:
+            build_ken_burns_clip(item["image"], item["duration"], clip_path, vertical=vertical)
+        except Exception as e:
+            logging.warning(f"⚠️ Fact {i+1} ki photo se clip nahi bana ({e}), plain slide use ho rahi hai.")
+            notify_telegram(f"⚠️ Fact {i+1} ki photo kharab thi, uski jagah plain slide use hui.")
+            build_solid_fallback_clip(item["duration"], clip_path, vertical=vertical)
+
         # audio + subtitle burn-in
         final_clip = os.path.join(OUTPUT_DIR, f"final_{i}.mp4")
         safe_text = item["text"].replace("'", "").replace(":", "")[:200]
@@ -260,7 +285,9 @@ def build_history_video(fact_items, video_format, output_path):
             "-vf", f"{drawtext}", "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-c:a", "aac", "-shortest", final_clip
         ]
-        subprocess.run(cmd, capture_output=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Fact {i+1} final clip build fail: {result.stderr[-800:]}")
         clips.append(final_clip)
 
     list_file = os.path.join(OUTPUT_DIR, "concat_list.txt")
