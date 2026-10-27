@@ -67,8 +67,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: ffmpeg install
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: System deps (ffmpeg + Devanagari fonts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-ui-core
+          # Ensure Noto Sans Devanagari is present for Hindi captions
+          fc-list :lang=hi | head -5 || true
+          ls /usr/share/fonts/truetype/noto/NotoSansDevanagari* 2>/dev/null || true
 
       - name: Python deps install
         run: pip install -r requirements.txt
@@ -88,7 +93,8 @@ jobs:
           GEMINI_API_KEY_1: ${{ secrets.GEMINI_API_KEY_1 }}
           GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
           GEMINI_API_KEY_3: ${{ secrets.GEMINI_API_KEY_3 }}
-          GEMINI_MODEL_NAME: "gemini-3.6-flash"
+          # Valid models: gemini-2.0-flash | gemini-1.5-flash | gemini-2.5-flash
+          GEMINI_MODEL_NAME: "gemini-2.0-flash"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python history_facts_bot.py
